@@ -16,26 +16,22 @@ This extension makes that pattern work in pi — not as a suggestion, but as a m
 
 ## Installation
 
-The extension is loaded by pi from any project root tree:
+Install directly in your pi project:
 
-```json
-// ~/.config/pi/extensions.json or .pi/extensions.json
-{
-  "pi": {
-    "extensions": ["./path/to/pi-devin-fusion"]
-  }
-}
+```bash
+pi install ./
 ```
 
-Or install it as a package:
+Or install from npm:
 
-```json
-// package.json
-{
-  "pi": {
-    "extensions": ["pi-devin-fusion"]
-  }
-}
+```bash
+pi install npm:pi-devin-fusion
+```
+
+You can also install from a local path:
+
+```bash
+pi install ./path/to/pi-devin-fusion
 ```
 
 ## Usage

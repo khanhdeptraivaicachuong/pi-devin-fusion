@@ -1,6 +1,6 @@
 {
   "name": "pi-devin-fusion",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Devin sidekick planner/executor split for pi, inspired by opencode-fusion",
   "type": "module",
   "main": "./src/index.ts",
@@ -32,7 +32,17 @@
       "./src/index.ts"
     ]
   },
-  "keywords": ["pi-package", "pi-extension", "devin", "fusion", "sidekick", "planner", "executor", "coding-agent", "llm"],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "devin",
+    "fusion",
+    "sidekick",
+    "planner",
+    "executor",
+    "coding-agent",
+    "llm"
+  ],
   "dependencies": {},
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

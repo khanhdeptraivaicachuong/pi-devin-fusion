@@ -41,6 +41,14 @@ test("applyDefaults accepts session overrides for tools, max calls, footer", () 
 	eq(resolved.footerDisplay, "compact", "footer override");
 });
 
+test("applyDefaults accepts session overrides for team executors", () => {
+	const resolved = applyDefaults(
+		{ teamExecutors: ["openai/gpt-4.1-mini"] },
+		{ teamExecutors: [" anthropic/claude-haiku ", "xai/grok-code-fast-1", "anthropic/claude-haiku", ""] },
+	);
+	eq(resolved.teamExecutors, ["anthropic/claude-haiku", "xai/grok-code-fast-1"], "team executor override honored and normalized");
+});
+
 test("applyDefaults override of empty string clears executor for auto", () => {
 	const resolved = applyDefaults({ executor: "anthropic/claude-haiku-4-5" }, { executor: "" });
 	eq(resolved.executor, "", "empty string clears configured executor");

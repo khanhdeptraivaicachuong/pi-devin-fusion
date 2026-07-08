@@ -136,13 +136,14 @@ function clampNumber(value: number, min: number, max: number): number {
 
 export function applyDefaults(
 	config: DevinConfig,
-	overrides: Pick<DevinConfig, "executor" | "executorTools" | "maxToolCalls" | "footerDisplay"> = {},
+	overrides: Pick<DevinConfig, "executor" | "executorTools" | "maxToolCalls" | "footerDisplay" | "teamExecutors"> = {},
 ): ResolvedDevinConfig {
 	const merged: DevinConfig = { ...config };
 	if (overrides.executor !== undefined) merged.executor = overrides.executor;
 	if (overrides.executorTools !== undefined) merged.executorTools = overrides.executorTools;
 	if (overrides.maxToolCalls !== undefined) merged.maxToolCalls = overrides.maxToolCalls;
 	if (overrides.footerDisplay !== undefined) merged.footerDisplay = overrides.footerDisplay;
+	if (overrides.teamExecutors !== undefined) merged.teamExecutors = overrides.teamExecutors;
 
 	// Single source of truth for defaults: callers can read these knobs directly.
 	// The invoking model/tool can only choose context; executor, tools, max calls,

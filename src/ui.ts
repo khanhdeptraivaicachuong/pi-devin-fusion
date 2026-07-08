@@ -35,6 +35,7 @@ interface ModelInfo {
 export interface DevinSetupState {
 	executorId?: string;
 	executorAuto?: boolean;
+	teamExecutorIds?: string[];
 	mode?: DevinMode;
 	executorTools?: ToolSelection;
 	maxToolCalls?: number;
@@ -82,6 +83,25 @@ export function setupToolSelectionLabel(selection: ToolSelection | undefined): s
 	return Array.isArray(selection) ? `custom (${selectionLabel(selection)})` : selectionLabel(selection);
 }
 
+/** Toggle a model id in the team executor list. Selecting the same id removes it. Immutable. */
+export function toggleTeamExecutorSelection(current: string[], id: string): string[] {
+	if (current.includes(id)) return current.filter((x) => x !== id);
+	if (current.length >= 6) return current;
+	return [...current, id];
+}
+
+/** Badge for the model picker's right column when a model is in the team list. */
+export function teamBadge(teamIndex: number): string {
+	return teamIndex > 0 ? `◆ team #${teamIndex}` : "";
+}
+
+/** Short summary of the team executor list for status/footer lines. */
+export function teamExecutorLabel(ids: string[]): string {
+	if (ids.length === 0) return "none";
+	if (ids.length === 1) return ids[0];
+	return `${ids[0]} +${ids.length - 1}`;
+}
+
 /**
  * Replace a SelectList's items in place. pi-tui exposes no public setItems(),
  * and setFilter only prefix-matches value, so the picker needs direct guarded
@@ -115,6 +135,7 @@ export async function selectDevinSetup(
 	const state: DevinSetupState = {
 		executorId: initial.executorId,
 		executorAuto: initial.executorAuto ?? !initial.executorId,
+		teamExecutorIds: initial.teamExecutorIds ?? [],
 		mode: initial.mode ?? "available",
 		executorTools: initial.executorTools ?? "all",
 		maxToolCalls: clampMaxToolCalls(initial.maxToolCalls),
@@ -199,13 +220,17 @@ export async function selectDevinSetup(
 
 		const container = new Container();
 		container.addChild(new DynamicBorder((s) => accent(s)));
-		container.addChild(new Text(accent(theme.bold("Devin Setup"))));
-		container.addChild(new Text(dim("Choose one executor model, or clear to auto. Tab to Config.")));
+	container.addChild(new Text(accent(theme.bold("Devin Setup"))));
+	container.addChild(new Text(dim("Choose executor model(s). e=single · t=team · x=auto · T=clear team. Tab to Config.")));
+
 		container.addChild(new Spacer(1));
 
-		const executorLine = new Text("");
-		container.addChild(executorLine);
-		container.addChild(new Spacer(1));
+	const executorLine = new Text("");
+	const teamLine = new Text("");
+	container.addChild(executorLine);
+	container.addChild(teamLine);
+	container.addChild(new Spacer(1));
+
 
 		const modelsHeader = new Text("");
 		const searchLine = new Text("");
@@ -213,12 +238,18 @@ export async function selectDevinSetup(
 		container.addChild(searchLine);
 
 		const providerWidth = Math.min(16, Math.max(8, ...models.map((m) => m.provider.length)) + 2);
-		const makeItems = (filtered: ModelInfo[]): SelectItem[] =>
-			filtered.map((m) => ({
+	const makeItems = (filtered: ModelInfo[]): SelectItem[] =>
+		filtered.map((m) => {
+			const isExecutor = state.executorId === m.identifier;
+			const teamIndex = state.teamExecutorIds?.indexOf(m.identifier) ?? -1;
+			const badges = [executorBadge(isExecutor), teamBadge(teamIndex + 1)].filter(Boolean).join(" ");
+			return {
 				value: m.identifier,
 				label: `${m.provider.padEnd(providerWidth)}${m.name}`,
-				description: executorBadge(state.executorId === m.identifier),
-			}));
+				description: badges,
+			};
+		});
+
 
 		const selectList = new SelectList(
 			makeItems(models),
@@ -238,10 +269,17 @@ export async function selectDevinSetup(
 		container.addChild(hint);
 		container.addChild(new DynamicBorder((s) => accent(s)));
 
-		function executorSummary(): string {
-			if (!state.executorId) return dim("Executor: ") + "auto";
-			return dim("Executor: ") + (nameById.get(state.executorId) ?? state.executorId);
-		}
+	function executorSummary(): string {
+		if (!state.executorId) return dim("Executor: ") + "auto";
+		return dim("Executor: ") + (nameById.get(state.executorId) ?? state.executorId);
+	}
+
+	function teamSummary(): string {
+		const ids = state.teamExecutorIds ?? [];
+		if (ids.length === 0) return dim("Team: ") + "none (fallback to executor)";
+		return dim("Team: ") + teamExecutorLabel(ids);
+	}
+
 
 		function configRowText(i: number): string {
 			const row = configRows[i];
@@ -259,7 +297,7 @@ export async function selectDevinSetup(
 				const note = configRows[configIndex].note();
 				return dim(`↑/↓ setting • Space/←→ change • Tab models • Enter save • Esc cancel${note ? "  —  " + note : ""}`);
 			}
-			return dim("↑/↓ move • e executor • x auto • / search • Tab config • Enter save • Esc cancel");
+			return dim("↑/↓ move • e executor • t team • x auto • T clear team • / search • Tab config • Enter save • Esc cancel");
 		}
 
 		function refresh() {
@@ -270,6 +308,7 @@ export async function selectDevinSetup(
 			selectList.setSelectedIndex(idx >= 0 ? idx : 0);
 
 			executorLine.setText(executorSummary());
+			teamLine.setText(teamSummary());
 			modelsHeader.setText(focus === "models" ? accent("▸ Models") : dim("  Models"));
 			configHeader.setText(focus === "config" ? accent("▸ Config") : dim("  Config"));
 			searchLine.setText(
@@ -302,6 +341,7 @@ export async function selectDevinSetup(
 			done({
 				executorId: state.executorId,
 				executorAuto: state.executorAuto ?? !state.executorId,
+				teamExecutorIds: state.teamExecutorIds,
 				mode: state.mode,
 				executorTools: state.executorTools,
 				maxToolCalls: state.maxToolCalls,
@@ -397,6 +437,19 @@ export async function selectDevinSetup(
 				if (data === "x") {
 					state.executorId = undefined;
 					state.executorAuto = true;
+					refresh();
+					return;
+				}
+				if (data === "t") {
+					const item = selectList.getSelectedItem();
+					if (item) {
+						state.teamExecutorIds = toggleTeamExecutorSelection(state.teamExecutorIds ?? [], item.value);
+						refresh();
+					}
+					return;
+				}
+				if (data === "T") {
+					state.teamExecutorIds = [];
 					refresh();
 				}
 			},

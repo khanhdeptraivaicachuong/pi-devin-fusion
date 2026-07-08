@@ -17,7 +17,7 @@ import { resolveExecutorModel, resolveTeamExecutors } from "./models.ts";
 import { modelDisplay } from "./models.ts";
 import { assignExecutorsToParts, buildWorkerPrompt, formatTeamResult, normalizeTeamParts, parseWorkerResult, runTeamWorkers } from "./team.ts";
 import { clampMaxToolCalls, isMutatingSelection, selectionLabel } from "./tools.ts";
-import { selectDevinSetup, type DevinSetupState } from "./ui.ts";
+import { selectDevinSetup, teamExecutorLabel, type DevinSetupState } from "./ui.ts";
 import { PLANNER_FORCE_PROMPT_PREFIX } from "./prompts.ts";
 import type { DevinConfig, DevinMode, FooterDisplay, SidekickOptions, TeamPart, ToolSelection } from "./types.ts";
 
@@ -103,6 +103,7 @@ function forceDevinPrompt(prompt: string): string {
 interface DevinState {
 	executorId?: string;
 	executorAuto?: boolean;
+	teamExecutorIds?: string[];
 	mode?: DevinMode;
 	executorTools?: ToolSelection;
 	maxToolCalls?: number;
@@ -117,6 +118,7 @@ function persistSessionState(
 	pi.appendEntry("devin-state", {
 		executorId: state.executorId,
 		executorAuto: state.executorAuto ?? false,
+		teamExecutorIds: state.teamExecutorIds,
 		mode: state.mode,
 		executorTools: state.executorTools,
 		maxToolCalls: state.maxToolCalls,
@@ -134,6 +136,7 @@ function restoreSessionState(ctx: ExtensionContext): DevinState | undefined {
 			const data = entry.data as {
 				executorId?: string;
 				executorAuto?: boolean;
+				teamExecutorIds?: string[];
 				mode?: DevinMode;
 				executorTools?: ToolSelection;
 				maxToolCalls?: number;
@@ -143,6 +146,7 @@ function restoreSessionState(ctx: ExtensionContext): DevinState | undefined {
 			return {
 				executorId: data.executorId,
 				executorAuto: data.executorAuto ?? false,
+				teamExecutorIds: data.teamExecutorIds,
 				mode: normalizeMode(data),
 				executorTools: data.executorTools,
 				maxToolCalls: data.maxToolCalls,
@@ -162,13 +166,14 @@ function devinFooterText(mode: DevinMode, executorId: string | undefined, displa
 	return display === "compact" ? base.replace(/ • .*/, " • executor set") : base;
 }
 
-function sessionConfigOverrides(state: DevinState | undefined): Pick<DevinConfig, "executor" | "executorTools" | "maxToolCalls" | "footerDisplay"> {
-	const overrides: Pick<DevinConfig, "executor" | "executorTools" | "maxToolCalls" | "footerDisplay"> = {};
+function sessionConfigOverrides(state: DevinState | undefined): Pick<DevinConfig, "executor" | "executorTools" | "maxToolCalls" | "footerDisplay" | "teamExecutors"> {
+	const overrides: Pick<DevinConfig, "executor" | "executorTools" | "maxToolCalls" | "footerDisplay" | "teamExecutors"> = {};
 	if (state?.executorAuto) overrides.executor = "";
 	else if (state?.executorId !== undefined) overrides.executor = state.executorId;
 	if (state?.executorTools !== undefined) overrides.executorTools = state.executorTools;
 	if (state?.maxToolCalls !== undefined) overrides.maxToolCalls = state.maxToolCalls;
 	if (state?.footerDisplay !== undefined) overrides.footerDisplay = state.footerDisplay;
+	if (state?.teamExecutorIds !== undefined) overrides.teamExecutors = state.teamExecutorIds;
 	return overrides;
 }
 
@@ -192,11 +197,13 @@ export function buildInitialState(
 	configExecutorTools?: DevinConfig["executorTools"],
 	configMaxToolCalls?: DevinConfig["maxToolCalls"],
 	configFooterDisplay?: DevinConfig["footerDisplay"],
+	configTeamExecutors?: DevinConfig["teamExecutors"],
 ): DevinSetupState {
 	const session = restoreSessionState(ctx);
 	return {
 		executorId: session ? session.executorId : resolvedExecutorId,
 		executorAuto: session ? (session.executorAuto ?? false) : !resolvedExecutorId,
+		teamExecutorIds: session?.teamExecutorIds ?? configTeamExecutors ?? [],
 		mode: normalizeMode(session),
 		executorTools: session?.executorTools ?? configExecutorTools ?? "all",
 		maxToolCalls: session?.maxToolCalls ?? configMaxToolCalls,
@@ -209,6 +216,7 @@ async function applySetup(pi: ExtensionAPI, ctx: ExtensionContext, state: DevinS
 	const next: DevinState & { mode: DevinMode } = {
 		executorId: state.executorId,
 		executorAuto: !state.executorId,
+		teamExecutorIds: state.teamExecutorIds,
 		mode: state.mode ?? "available",
 		executorTools: state.executorTools,
 		maxToolCalls: state.maxToolCalls,
@@ -239,6 +247,7 @@ async function applySetup(pi: ExtensionAPI, ctx: ExtensionContext, state: DevinS
 	ctx.ui.notify(
 		[
 			`Executor: ${executorLabel}`,
+			`Team: ${teamExecutorLabel(next.teamExecutorIds ?? [])}`,
 			`Tools: ${selectionLabel(next.executorTools)} (max ${clampMaxToolCalls(next.maxToolCalls)})`,
 			`Footer: ${normalizeFooterDisplay(next.footerDisplay)}`,
 			...(warnings.length ? [`Warnings: ${warnings.join("; ")}`] : []),
@@ -538,6 +547,7 @@ export default function (pi: ExtensionAPI) {
 				config.executorTools,
 				config.maxToolCalls,
 				config.footerDisplay,
+				config.teamExecutors,
 			);
 
 			const next = await selectDevinSetup(ctx, available, initial);
@@ -592,6 +602,7 @@ export default function (pi: ExtensionAPI) {
 			const lines = [
 				`Mode: ${mode}`,
 				`Executor: ${executorStatusLabel(config.executor, resolvedExecutor ? modelDisplay(resolvedExecutor) : undefined)}`,
+				`Team: ${teamExecutorLabel(state?.teamExecutorIds ?? config.teamExecutors ?? [])}`,
 				`Tools: ${selectionLabel(config.executorTools)} (max ${clampMaxToolCalls(config.maxToolCalls)})`,
 				`Consent: ${state?.toolsConsented || config.executorToolsConsent ? "granted" : "not granted"}`,
 				`Footer: ${footer}`,

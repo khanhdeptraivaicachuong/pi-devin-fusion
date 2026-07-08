@@ -44,7 +44,7 @@ pi install ./path/to/pi-devin-fusion
 | `/devin available` / `auto` | Let the model decide when to use the sidekick (default) |
 | `/devin off` / `disable` / `disabled` | Disable the sidekick tool for this session |
 | `/devin <prompt>` | Send a prompt through the forced planner prefix once; blocked while mode is `off` |
-| `/devin-setup` | Interactive picker to choose mode, executor model, tools, and config (session-scoped) |
+| `/devin-setup` | Interactive picker to choose mode, executor, team workers, tools, and config (session-scoped) |
 | `/devin-init` | Create a `.pi/devin.json` template to set the executor model and tool selection |
 | `/devin-status` | Show current Devin mode, executor, tool selection, and consent state |
 ### Tools
@@ -58,7 +58,10 @@ The extension registers two tools:
 
 ### Interactive setup (recommended for first use)
 
-1. Run `/devin-setup` to pick mode, executor model, and session config interactively.
+1. Run `/devin-setup` to pick mode, executor model, team workers, tools, and session config interactively.
+   - `e` selects the single executor, `x` clears to auto.
+   - `t` toggles a model into the team worker list (up to 6), `T` clears the team.
+   - `Tab` switches to config section for tools, max calls, footer.
 2. Ask your question. In `available` mode the planner decides when to use the sidekick; in `forced` mode every normal prompt is routed through the planner/sidekick split.
 
 ### Config-file setup

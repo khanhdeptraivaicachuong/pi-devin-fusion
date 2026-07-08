@@ -86,3 +86,23 @@ test("applyDefaults fails closed for invalid explicit tool selections", () => {
 	eq(applyDefaults({ executorTools: [] }, {}).executorTools, [], "empty list stays no tools");
 	eq(applyDefaults({ executorTools: ["typo"] }, {}).executorTools, [], "all-invalid list stays no tools");
 });
+
+test("applyDefaults normalizes team executor settings", () => {
+	const resolved = applyDefaults({
+		teamExecutors: [" openai/gpt-4.1-mini ", "anthropic/claude-haiku", "openai/gpt-4.1-mini", ""],
+		teamSize: 99,
+		teamMaxConcurrency: 0,
+		teamTools: "readonly",
+	} as never, {});
+	eq(resolved.teamExecutors, ["openai/gpt-4.1-mini", "anthropic/claude-haiku"], "team executors deduped");
+	eq(resolved.teamSize, 6, "team size clamped");
+	eq(resolved.teamMaxConcurrency, 1, "team concurrency clamped");
+	eq(resolved.teamTools, "readonly", "team tools preserved");
+});
+
+test("applyDefaults defaults team tools to readonly and preserves mutating team tools for runtime rejection", () => {
+	const defaults = applyDefaults({} as never, {});
+	eq(defaults.teamTools, "readonly", "team tools default readonly");
+	const rejected = applyDefaults({ teamTools: "all" } as never, {});
+	eq(rejected.teamTools, "all", "mutating team tools preserved for runtime rejection");
+});

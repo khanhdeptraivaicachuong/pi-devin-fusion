@@ -49,9 +49,10 @@ pi install ./path/to/pi-devin-fusion
 | `/devin-status` | Show current Devin mode, executor, tool selection, and consent state |
 ### Tools
 
-The extension registers one tool:
+The extension registers two tools:
 
-- **`sidekick`** — Delegate a task to the executor model. Accepts a `prompt` string, optional `context_mode` (`"none"` / `"recent"`), and optional `context_turns` (1–10, default 4 for "recent" mode).
+- **`sidekick`** — Delegate one task to the executor model. Accepts a `prompt` string, optional `context_mode` (`"none"` / `"recent"`), and optional `context_turns` (1–10, default 4 for "recent" mode).
+- **`sidekick_team`** — Split a broad read-only research/planning task across multiple cheaper worker models. Accepts a shared `prompt`, optional explicit `parts`, `team_size`, `max_concurrency`, `mode` (`"research"`, `"plan"`, or `"patch_proposal"`), and optional recent context.
 
 ## Workflow
 
@@ -83,6 +84,10 @@ the effective configuration.
 {
   "$schema": "devin-fusion-config",
   "executor": "openai/gpt-4.1-mini",
+  "teamExecutors": ["openai/gpt-4.1-mini", "anthropic/claude-haiku"],
+  "teamSize": 3,
+  "teamMaxConcurrency": 3,
+  "teamTools": "readonly",
   "executorTools": "all",
   "executorToolsConsent": false,
   "maxExecutorOutputTokens": 4096,
@@ -94,8 +99,12 @@ the effective configuration.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `executor` | auto-selected | Model identifier for the executor (e.g. `"openai/gpt-4.1-mini"`). Auto-selects the first non-current text model if unset. |
-| `executorTools` | `"all"` | Tool selection: `"none"`, `"readonly"`, `"all"`, or an array like `["read", "grep", "write"]`. |
+| `executor` | auto-selected | Model identifier for the single `sidekick` executor (e.g. `"openai/gpt-4.1-mini"`). Auto-selects the first non-current text model if unset. |
+| `teamExecutors` | fallback to `executor` | Ordered worker model identifiers for `sidekick_team`. Duplicate/empty entries are ignored. |
+| `teamSize` | `3` | Number of heuristic workers when `parts` are not provided (clamped to 1–6). |
+| `teamMaxConcurrency` | `3` | Max concurrent team workers (clamped to 1–4). More workers can increase cost/rate-limit pressure. |
+| `teamTools` | `"readonly"` | Team worker tool access. V1 supports only `"none"` or `"readonly"`; mutating tools fail closed. |
+| `executorTools` | `"all"` | Single-sidekick tool selection: `"none"`, `"readonly"`, `"all"`, or an array like `["read", "grep", "write"]`. |
 | `executorToolsConsent` | `false` | When `true`, skips the consent prompt for mutating tools in trusted projects. Untrusted projects always block mutating tools. |
 | `maxExecutorOutputTokens` | `4096` | Max output tokens per executor call (validated and capped). |
 | `temperature` | `0.2` | Temperature for the executor model (`0..2`). |
@@ -104,13 +113,15 @@ the effective configuration.
 
 Invalid config values are ignored or clamped before use. Project-local `.pi/devin.json` is read only when the project is trusted; global `devin.json` remains the fallback.
 
+`sidekick_team` is V1 read-only/proposal mode: workers can research, analyze, and suggest next steps, but they should not directly edit/write/bash in parallel. The active planner remains responsible for final synthesis and deciding what to implement.
+
 **Session precedence:** `/devin-setup` selection overrides `.pi/devin.json`. Session state persists in the conversation and is restored on session restore.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `src/index.ts` | Extension entry: `sidekick` tool, `/devin` commands, session state, footers |
+| `src/index.ts` | Extension entry: `sidekick`/`sidekick_team` tools, `/devin` commands, session state, footers |
 | `src/config.ts` | Config loading, defaults, template generation |
 | `src/context.ts` | Context normalization and recent-history builder |
 | `src/executor.ts` | Executor pipeline: model resolution, consent gate, serialized mutating runs |
@@ -118,8 +129,9 @@ Invalid config values are ignored or clamped before use. Project-local `.pi/devi
 | `src/llm.ts` | Low-level LLM calls, tool loop, circuit breakers, output truncation |
 | `src/models.ts` | Model resolution helpers, executor auto-selection with auth check |
 | `src/prompts.ts` | Planner prefix prompt and sidekick system prompt |
+| `src/team.ts` | Team sidekick worker splitting, assignment, result parsing, and formatting |
 | `src/tools.ts` | Tool-definition factory, selection normalization, mutating detection |
-| `src/types.ts` | Shared DevinConfig, SidekickOptions, ToolSelection, FooterDisplay types |
+| `src/types.ts` | Shared DevinConfig, SidekickOptions, TeamPart, ToolSelection, FooterDisplay types |
 | `src/ui.ts` | Interactive session setup picker via pi TUI components |
 | `src/utils.ts` | Concurrency-limited map, byte truncation, JSON extraction |
 ## Credit

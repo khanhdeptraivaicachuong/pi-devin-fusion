@@ -13,12 +13,13 @@ import { join } from "node:path";
 import { applyDefaults, generateConfigExample, loadConfig } from "./config.ts";
 import { buildRecentContextFromEntries, type DevinContextMode, normalizeContextTurns } from "./context.ts";
 import { runSidekick } from "./executor.ts";
-import { resolveExecutorModel } from "./models.ts";
+import { resolveExecutorModel, resolveTeamExecutors } from "./models.ts";
 import { modelDisplay } from "./models.ts";
+import { assignExecutorsToParts, buildWorkerPrompt, formatTeamResult, normalizeTeamParts, parseWorkerResult, runTeamWorkers } from "./team.ts";
 import { clampMaxToolCalls, isMutatingSelection, selectionLabel } from "./tools.ts";
 import { selectDevinSetup, type DevinSetupState } from "./ui.ts";
 import { PLANNER_FORCE_PROMPT_PREFIX } from "./prompts.ts";
-import type { DevinConfig, DevinMode, FooterDisplay, SidekickOptions, ToolSelection } from "./types.ts";
+import type { DevinConfig, DevinMode, FooterDisplay, SidekickOptions, TeamPart, ToolSelection } from "./types.ts";
 
 const SidekickParams = Type.Object({
 	prompt: Type.String({
@@ -38,6 +39,20 @@ const SidekickParams = Type.Object({
 			default: 4,
 		}),
 	),
+});
+
+const TeamPartParams = Type.Object({
+	name: Type.Optional(Type.String({ description: "Short worker name, e.g. core, ui, tests." })),
+	prompt: Type.String({ description: "Scoped task for this worker." }),
+});
+
+const SidekickTeamParams = Type.Object({
+	prompt: Type.String({ description: "Shared objective for the team-agent run." }),
+	parts: Type.Optional(Type.Array(TeamPartParams, { maxItems: 6, description: "Optional explicit worker parts. If absent, V1 uses a simple heuristic split." })),
+	team_size: Type.Optional(Type.Integer({ minimum: 1, maximum: 6, default: 3 })),
+	max_concurrency: Type.Optional(Type.Integer({ minimum: 1, maximum: 4, default: 3 })),
+	context_mode: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("recent")], { default: "none" })),
+	context_turns: Type.Optional(Type.Integer({ minimum: 1, maximum: 10, default: 4 })),
 });
 
 export function normalizeFooterDisplay(value: unknown): FooterDisplay {
@@ -343,9 +358,97 @@ export default function (pi: ExtensionAPI) {
 				onUpdate,
 			);
 		},
-	});
+		});
 
-	pi.registerCommand("devin", {
+		pi.registerTool({
+			name: "sidekick_team",
+			label: "Sidekick Team",
+			description: [
+				"Team-agent executor tool. Split a broad research/planning task across multiple cheaper worker models in parallel.",
+				"Workers stay read-only in V1 and return scoped findings for the active planner to review and synthesize.",
+			].join(" "),
+			promptGuidelines: [
+				"Use sidekick_team when a task has independent parts: core/runtime, UI, tests, docs, security, or alternative analyses.",
+				"Pass explicit parts when you can split the work. Otherwise the tool uses a small heuristic split.",
+				"Do not use it for direct code edits in V1; team workers are read-only/proposal workers.",
+			],
+			parameters: SidekickTeamParams,
+			async execute(_toolCallId, params, signal, onUpdate, ctx) {
+				const state = restoreSessionState(ctx);
+				if (normalizeMode(state) === "off") {
+					return {
+						content: [{ type: "text", text: JSON.stringify({ status: "error", error: "devin disabled" }, null, 2) }],
+						details: { status: "error", error: "devin disabled", failure_reason: "unexpected_error" },
+					};
+				}
+
+				const baseConfig = applyDefaults(loadConfig(ctx.cwd, ctx.isProjectTrusted()), sessionConfigOverrides(state));
+				if (isMutatingSelection(baseConfig.teamTools)) {
+					const details = {
+						status: "error" as const,
+						error: "team sidekick V1 supports only none/readonly tools",
+						failure_reason: "team_mutation_not_supported" as const,
+					};
+					return { content: [{ type: "text", text: JSON.stringify(details, null, 2) }], details };
+				}
+
+				const contextMode = (params.context_mode ?? "none") as DevinContextMode;
+				const contextText = contextMode === "recent"
+					? buildRecentContextFromEntries(ctx.sessionManager.getBranch(), normalizeContextTurns(params.context_turns))
+					: undefined;
+				const warnings: string[] = [];
+				const teamSize = clampNumberLocal(params.team_size ?? baseConfig.teamSize, 1, 6);
+				const maxConcurrency = clampNumberLocal(params.max_concurrency ?? baseConfig.teamMaxConcurrency, 1, 4);
+				const executors = resolveTeamExecutors(ctx.modelRegistry, ctx.model, baseConfig.teamExecutors, baseConfig.executor, teamSize, warnings);
+				const parts = normalizeTeamParts(params.prompt, params.parts as TeamPart[] | undefined, teamSize);
+				const assigned = assignExecutorsToParts(parts, executors);
+				if (assigned.length === 0) {
+					const details = {
+						status: "error" as const,
+						error: "no authed text team executor model available",
+						failure_reason: "no_executor_model" as const,
+						warnings,
+					};
+					return { content: [{ type: "text", text: JSON.stringify(details, null, 2) }], details };
+				}
+
+				onUpdate?.({ content: [{ type: "text", text: `Sidekick team: ${assigned.length} workers | concurrency ${maxConcurrency}` }], details: { phase: "team_executing" } });
+				const teamDetails = await runTeamWorkers(assigned, maxConcurrency, async ({ part, executor }) => {
+					const executorModel = modelDisplay(executor);
+					const workerPrompt = buildWorkerPrompt(params.prompt, part, contextText);
+					const result = await runSidekick(
+						ctx.cwd,
+						ctx.modelRegistry,
+						ctx.model,
+						workerPrompt,
+						ctx.isProjectTrusted(),
+						{ ...sessionConfigOverrides(state), executor: executorModel, executorTools: baseConfig.teamTools },
+						ctx,
+						false,
+						signal,
+					);
+					if (result.details.status === "error") {
+						return { name: part.name, executor_model: executorModel, status: "error" as const, error: result.details.error ?? "worker failed" };
+					}
+					return parseWorkerResult(part.name, executorModel, result.content[0]?.text ?? result.details.output ?? "");
+				});
+				teamDetails.warnings = warnings;
+				const text = formatTeamResult(teamDetails);
+				return {
+					content: [{ type: "text", text }],
+					details: {
+						status: teamDetails.status,
+						team: teamDetails.team,
+						executor_models: [...new Set(assigned.map((a) => modelDisplay(a.executor)))],
+						output: text,
+						warnings,
+					},
+				};
+			},
+		});
+
+		pi.registerCommand("devin", {
+
 		description: "Set Devin mode: /devin on | available | off (no arg toggles available/forced; /devin <prompt> forces once)",
 		getArgumentCompletions: devinArgumentCompletions,
 		handler: async (args, ctx) => {
@@ -536,4 +639,8 @@ function modeLabel(mode: DevinMode): string {
 	if (mode === "forced") return "Devin forced";
 	if (mode === "off") return "Devin off";
 	return "Devin available";
+}
+
+function clampNumberLocal(value: number, min: number, max: number): number {
+	return Math.max(min, Math.min(max, Math.floor(Number.isFinite(value) ? value : min)));
 }

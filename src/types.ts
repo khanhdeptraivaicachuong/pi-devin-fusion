@@ -15,6 +15,14 @@ export type DevinMode = "available" | "forced" | "off";
 export interface DevinConfig {
 	/** Explicit executor model identifier, e.g. "anthropic/claude-haiku-4-5". */
 	executor?: string;
+	/** Explicit team executor model identifiers for sidekick_team workers. */
+	teamExecutors?: string[];
+	/** Number of team workers to create when parts are not explicit (1–6). */
+	teamSize?: number;
+	/** Max concurrent team workers (1–4). */
+	teamMaxConcurrency?: number;
+	/** Team worker tool access. V1 supports only "none" or "readonly". */
+	teamTools?: ToolSelection;
 	/** Max tokens for the executor's final answer. */
 	maxExecutorOutputTokens?: number;
 	/** Sampling temperature for the executor. */
@@ -36,7 +44,27 @@ export type ResolvedDevinConfig = DevinConfig & {
 	executorTools: ToolSelection;
 	maxToolCalls: number;
 	footerDisplay: FooterDisplay;
+	teamSize: number;
+	teamMaxConcurrency: number;
+	teamTools: ToolSelection;
 };
+
+export interface TeamPart {
+	name?: string;
+	prompt: string;
+}
+
+export interface TeamWorkerResult {
+	name: string;
+	executor_model?: string;
+	status: "ok" | "blocked" | "error";
+	summary?: string;
+	findings?: string[];
+	files?: string[];
+	handoff_notes?: string[];
+	recommended_next_steps?: string[];
+	error?: string;
+}
 
 /** Options accepted from a session/extension override (planner cannot override tools). */
 export interface SidekickOptions {
@@ -53,8 +81,11 @@ export interface SidekickResult {
 }
 
 export interface SidekickDetails {
-	status: "ok" | "error";
+	status: "ok" | "partial" | "error";
 	executor_model?: string;
+	executor_models?: string[];
+	team?: TeamWorkerResult[];
+	synthesis?: string;
 	turns?: number;
 	tool_calls?: Array<{ name: string; ok: boolean }>;
 	capped?: boolean;
@@ -67,5 +98,6 @@ export interface SidekickDetails {
 		| "no_executor_model"
 		| "rate_limited"
 		| "insufficient_credits"
+		| "team_mutation_not_supported"
 		| "unexpected_error";
 }

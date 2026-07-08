@@ -51,3 +51,42 @@ export function resolveExecutorModel(
 	warnings.push("Executor fell back to the current planner model; cost savings are not guaranteed.");
 	return available[0];
 }
+
+export function resolveTeamExecutors(
+	registry: ModelRegistry,
+	currentModel: Model<Api> | undefined,
+	configuredTeamExecutors: string[] | undefined,
+	fallbackExecutor: string | undefined,
+	teamSize: number,
+	warnings: string[],
+): Model<Api>[] {
+	const configured = configuredTeamExecutors?.filter(Boolean) ?? [];
+	if (configured.length > 0) {
+		const seen = new Set<string>();
+		const out: Model<Api>[] = [];
+		for (const identifier of configured) {
+			const resolved = resolveModelIdentifier(registry, identifier);
+			if (!resolved) {
+				warnings.push(`Configured team executor ${identifier} was not found; skipping.`);
+				continue;
+			}
+			if (!resolved.input.includes("text")) {
+				warnings.push(`Configured team executor ${identifier} is not text-capable; skipping.`);
+				continue;
+			}
+			if (!registry.hasConfiguredAuth(resolved)) {
+				warnings.push(`Configured team executor ${identifier} is not authed; skipping.`);
+				continue;
+			}
+			const key = modelDisplay(resolved);
+			if (!seen.has(key)) {
+				seen.add(key);
+				out.push(resolved);
+			}
+		}
+		if (out.length > 0) return out.slice(0, Math.max(1, teamSize));
+	}
+
+	const fallback = resolveExecutorModel(registry, currentModel, fallbackExecutor, warnings);
+	return fallback ? [fallback] : [];
+}

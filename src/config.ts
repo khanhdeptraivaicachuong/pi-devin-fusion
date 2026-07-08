@@ -13,6 +13,13 @@ export const DEFAULT_MAX_EXECUTOR_OUTPUT_TOKENS = 4096;
 export const MAX_EXECUTOR_OUTPUT_TOKENS = 65_536;
 export const DEFAULT_TEMPERATURE = 0.2;
 export const DEFAULT_EXECUTOR_TOOLS: "all" = "all";
+export const DEFAULT_TEAM_TOOLS: "readonly" = "readonly";
+export const DEFAULT_TEAM_SIZE = 3;
+export const DEFAULT_TEAM_MAX_CONCURRENCY = 3;
+export const MIN_TEAM_SIZE = 1;
+export const MAX_TEAM_SIZE = 6;
+export const MIN_TEAM_CONCURRENCY = 1;
+export const MAX_TEAM_CONCURRENCY = 4;
 export const DEFAULT_MAX_TOOL_CALLS = 16;
 export const MIN_TOOL_CALLS = 1;
 export const MAX_TOOL_CALLS = 100;
@@ -48,6 +55,14 @@ function normalizeConfig(raw: unknown): DevinConfig {
 	const out: DevinConfig = {};
 
 	if (typeof input.executor === "string") out.executor = input.executor;
+	const teamExecutors = normalizeStringList(input.teamExecutors);
+	if (teamExecutors !== undefined) out.teamExecutors = teamExecutors;
+	const teamSize = finiteNumber(input.teamSize);
+	if (teamSize !== undefined) out.teamSize = clampNumber(Math.floor(teamSize), MIN_TEAM_SIZE, MAX_TEAM_SIZE);
+	const teamMaxConcurrency = finiteNumber(input.teamMaxConcurrency);
+	if (teamMaxConcurrency !== undefined) out.teamMaxConcurrency = clampNumber(Math.floor(teamMaxConcurrency), MIN_TEAM_CONCURRENCY, MAX_TEAM_CONCURRENCY);
+	const teamTools = normalizeTeamToolSelection(input.teamTools);
+	if (teamTools !== undefined) out.teamTools = teamTools;
 	const maxTokens = positiveInteger(input.maxExecutorOutputTokens);
 	if (maxTokens !== undefined) out.maxExecutorOutputTokens = Math.min(maxTokens, MAX_EXECUTOR_OUTPUT_TOKENS);
 	const temperature = finiteNumber(input.temperature);
@@ -78,6 +93,28 @@ function normalizeToolSelection(value: unknown): DevinConfig["executorTools"] | 
 		}
 	}
 	return names;
+}
+
+function normalizeTeamToolSelection(value: unknown): DevinConfig["teamTools"] | undefined {
+	if (value === undefined) return undefined;
+	const selection = normalizeToolSelection(value);
+	if (selection === INVALID_TOOL_SELECTION) return "none";
+	return selection;
+}
+
+function normalizeStringList(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const item of value) {
+		if (typeof item !== "string") continue;
+		const text = item.trim();
+		if (text && !seen.has(text)) {
+			seen.add(text);
+			out.push(text);
+		}
+	}
+	return out;
 }
 
 function isOneOf<T extends readonly string[]>(value: unknown, allowed: T): value is T[number] {
@@ -119,6 +156,9 @@ export function applyDefaults(
 		executorTools: normalized.executorTools ?? DEFAULT_EXECUTOR_TOOLS,
 		maxToolCalls: normalized.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
 		footerDisplay: normalized.footerDisplay ?? "full",
+		teamSize: normalized.teamSize ?? DEFAULT_TEAM_SIZE,
+		teamMaxConcurrency: normalized.teamMaxConcurrency ?? DEFAULT_TEAM_MAX_CONCURRENCY,
+		teamTools: normalized.teamTools ?? DEFAULT_TEAM_TOOLS,
 	};
 }
 

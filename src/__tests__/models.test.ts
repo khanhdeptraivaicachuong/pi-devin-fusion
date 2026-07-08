@@ -3,7 +3,7 @@
  */
 
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import { resolveExecutorModel } from "../models.ts";
+import { resolveExecutorModel, resolveTeamExecutors } from "../models.ts";
 import { eq, fakeModel, test } from "./_harness.ts";
 
 function fakeRegistry(available: string[], allAuthed: string[]): ModelRegistry {
@@ -52,4 +52,26 @@ test("no text model available returns undefined", () => {
 	const warnings: string[] = [];
 	const executor = resolveExecutorModel(registry, undefined, undefined, warnings);
 	if (executor !== undefined) throw new Error("expected undefined executor");
+});
+
+test("resolveTeamExecutors resolves explicit authed text models", () => {
+	const registry = fakeRegistry(["openai/gpt-4.1-mini", "anthropic/claude-haiku"], ["openai/gpt-4.1-mini", "anthropic/claude-haiku"]);
+	const warnings: string[] = [];
+	const executors = resolveTeamExecutors(registry, undefined, ["openai/gpt-4.1-mini", "anthropic/claude-haiku", "openai/gpt-4.1-mini"], undefined, 3, warnings);
+	eq(executors.map((m) => `${m.provider}/${m.id}`), ["openai/gpt-4.1-mini", "anthropic/claude-haiku"], "explicit team executors deduped");
+});
+
+test("resolveTeamExecutors falls back to single executor when no valid team list", () => {
+	const registry = fakeRegistry(["anthropic/claude-haiku", "openai/gpt-4.1-mini"], ["anthropic/claude-haiku", "openai/gpt-4.1-mini"]);
+	const warnings: string[] = [];
+	const executors = resolveTeamExecutors(registry, fakeModel("openai", "gpt-4.1-mini"), [], "anthropic/claude-haiku", 3, warnings);
+	eq(executors.map((m) => `${m.provider}/${m.id}`), ["anthropic/claude-haiku"], "fallback executor");
+});
+
+test("resolveTeamExecutors filters invalid team executors with warnings", () => {
+	const registry = fakeRegistry(["openai/gpt-4.1-mini"], ["openai/gpt-4.1-mini"]);
+	const warnings: string[] = [];
+	const executors = resolveTeamExecutors(registry, undefined, ["openai/gpt-4.1-mini", "anthropic/claude-haiku", "missing/model"], undefined, 3, warnings);
+	eq(executors.map((m) => `${m.provider}/${m.id}`), ["openai/gpt-4.1-mini"], "valid team executor only");
+	if (warnings.length < 2) throw new Error("expected warnings for invalid team executors");
 });

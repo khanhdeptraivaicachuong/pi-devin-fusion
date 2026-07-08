@@ -15,6 +15,7 @@ import type { ProviderStreamOptions } from "@earendil-works/pi-ai/compat";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { TOOL_OUTPUT_MAX_BYTES } from "./config.ts";
+import { sanitizeErrorMessage } from "./sanitize.ts";
 import type { ExecutorToolDef } from "./tools.ts";
 import { truncateToBytes } from "./utils.ts";
 
@@ -194,13 +195,13 @@ async function executeToolCall(
 			role: "toolResult",
 			toolCallId: tc.id,
 			toolName: tc.name,
-			content: truncateToolContent(out.content),
-			isError: false,
+			content: truncateToolContent(sanitizeToolContent(out.content, out.isError)),
+			isError: out.isError,
 			timestamp: Date.now(),
 		});
-		return true;
+		return !out.isError;
 	} catch (err) {
-		const text = err instanceof Error ? err.message : String(err);
+		const text = sanitizeErrorMessage(err instanceof Error ? err.message : String(err));
 		messages.push({
 			role: "toolResult",
 			toolCallId: tc.id,
@@ -222,6 +223,14 @@ function syntheticResult(tc: ToolCall, text: string): ToolResultMessage {
 		isError: true,
 		timestamp: Date.now(),
 	};
+}
+
+export function sanitizeToolContent(content: ToolContent, isError: boolean): ToolContent {
+	if (!isError) return content;
+	return content.map((part) => {
+		if (part.type !== "text") return part;
+		return { type: "text", text: sanitizeErrorMessage(part.text) };
+	});
 }
 
 /** Bound tool output before it re-enters the loop transcript and the final answer. */

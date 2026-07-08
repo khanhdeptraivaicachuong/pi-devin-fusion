@@ -18,9 +18,10 @@ import {
 	Text,
 } from "@earendil-works/pi-tui";
 import { modelDisplay } from "./models.ts";
-import { clampMaxToolCalls, isMutatingSelection } from "./tools.ts";
-import type { Api, DevinMode, FooterDisplay, Model, ToolMode } from "./types.ts";
+import { clampMaxToolCalls, isMutatingSelection, selectionLabel } from "./tools.ts";
+import type { Api, DevinMode, FooterDisplay, Model, ToolMode, ToolSelection } from "./types.ts";
 
+const MODE_CYCLE: DevinMode[] = ["available", "forced", "off"];
 const TOOL_MODE_CYCLE: ToolMode[] = ["none", "readonly", "all"];
 const FOOTER_DISPLAY_CYCLE: FooterDisplay[] = ["full", "compact", "off"];
 const MAX_CALLS_PRESETS = [4, 8, 12, 16, 25, 50, 100];
@@ -35,7 +36,7 @@ export interface DevinSetupState {
 	executorId?: string;
 	executorAuto?: boolean;
 	mode?: DevinMode;
-	executorTools?: ToolMode;
+	executorTools?: ToolSelection;
 	maxToolCalls?: number;
 	toolsConsented?: boolean;
 	footerDisplay?: FooterDisplay;
@@ -68,6 +69,17 @@ export function toggleExecutorSelection(current: string | undefined, id: string)
 /** Badge shown in the model picker's right column. */
 export function executorBadge(isExecutor: boolean): string {
 	return isExecutor ? "◆ executor" : "";
+}
+
+export function cycleMode(mode: DevinMode | undefined, dir: 1 | -1): DevinMode {
+	const current = mode ?? "available";
+	const i = MODE_CYCLE.indexOf(current);
+	const base = i < 0 ? 0 : i;
+	return MODE_CYCLE[(base + dir + MODE_CYCLE.length) % MODE_CYCLE.length];
+}
+
+export function setupToolSelectionLabel(selection: ToolSelection | undefined): string {
+	return Array.isArray(selection) ? `custom (${selectionLabel(selection)})` : selectionLabel(selection);
 }
 
 /**
@@ -110,30 +122,47 @@ export async function selectDevinSetup(
 		footerDisplay: initial.footerDisplay ?? "full",
 	};
 
-	interface ConfigRow {
-		label: string;
-		values: string[];
-		get: () => string;
-		set: (value: string) => void;
-		note: () => string;
-	}
-	const configRows: ConfigRow[] = [
-		{
-			label: "Executor tools",
-			values: TOOL_MODE_CYCLE,
-			get: () => state.executorTools ?? "all",
-			set: (v) => {
-				state.executorTools = v as ToolMode;
-				if (!isMutatingSelection(state.executorTools)) state.toolsConsented = false;
+		interface ConfigRow {
+			label: string;
+			values: string[];
+			get: () => string;
+			set: (value: string) => void;
+			note: () => string;
+		}
+		const configRows: ConfigRow[] = [
+			{
+				label: "Mode",
+				values: MODE_CYCLE,
+				get: () => state.mode ?? "available",
+				set: (v) => {
+					state.mode = v as DevinMode;
+				},
+				note: () =>
+					state.mode === "forced"
+						? "every normal prompt is routed through planner/sidekick"
+						: state.mode === "off"
+							? "sidekick is disabled for this session"
+							: "planner decides when to call sidekick",
 			},
-			note: () =>
-				isMutatingSelection(state.executorTools)
-					? "'all' adds bash/edit/write — you'll confirm on save; mutating runs serialize"
-					: state.executorTools === "readonly"
-						? "read/grep/find/ls — sidekick can inspect the project"
-						: "sidekick answers without tools",
-		},
-		{
+			{
+				label: "Executor tools",
+				values: TOOL_MODE_CYCLE,
+				get: () => Array.isArray(state.executorTools) ? "custom" : (state.executorTools ?? "all"),
+				set: (v) => {
+					state.executorTools = v as ToolMode;
+					if (!isMutatingSelection(state.executorTools)) state.toolsConsented = false;
+				},
+				note: () =>
+					Array.isArray(state.executorTools)
+						? `custom tools: ${selectionLabel(state.executorTools)} — cycle to replace with a bundle`
+						: isMutatingSelection(state.executorTools)
+							? "'all' adds bash/edit/write — you'll confirm on save; mutating runs serialize"
+							: state.executorTools === "readonly"
+								? "read/grep/find/ls — sidekick can inspect the project"
+								: "sidekick answers without tools",
+			},
+			{
+
 			label: "Max tool calls",
 			values: MAX_CALLS_PRESETS.map(String),
 			get: () => String(clampMaxToolCalls(state.maxToolCalls)),
@@ -219,7 +248,8 @@ export async function selectDevinSetup(
 			const focused = focus === "config" && i === configIndex;
 			const cursor = focused ? accent("› ") : "  ";
 			const label = focused ? accent(row.label) : dim(row.label);
-			const value = focused ? theme.bold(row.get()) : row.get();
+			const rawValue = row.label === "Executor tools" ? setupToolSelectionLabel(state.executorTools) : row.get();
+			const value = focused ? theme.bold(rawValue) : rawValue;
 			return `${cursor}${label}: ${value}`;
 		}
 
@@ -257,6 +287,11 @@ export async function selectDevinSetup(
 
 		function cycleConfig(dir: 1 | -1) {
 			const row = configRows[configIndex];
+			if (row.label === "Mode") {
+				state.mode = cycleMode(state.mode, dir);
+				refresh();
+				return;
+			}
 			const i = row.values.indexOf(row.get());
 			const base = i < 0 ? 0 : i;
 			row.set(row.values[(base + dir + row.values.length) % row.values.length]);

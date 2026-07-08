@@ -40,11 +40,11 @@ pi install ./path/to/pi-devin-fusion
 
 | Command | Description |
 |---------|-------------|
-| `/devin on` / `forced` | Force every user message through the planner/sidekick split |
+| `/devin on` / `forced` / `force` | Force every user message through the planner/sidekick split |
 | `/devin available` / `auto` | Let the model decide when to use the sidekick (default) |
-| `/devin off` | Disable the sidekick tool for this session |
-| `/devin <prompt>` | Send a prompt through the forced planner prefix once |
-| `/devin-setup` | Interactive picker to choose executor model, tools, and config (session-scoped) |
+| `/devin off` / `disable` / `disabled` | Disable the sidekick tool for this session |
+| `/devin <prompt>` | Send a prompt through the forced planner prefix once; blocked while mode is `off` |
+| `/devin-setup` | Interactive picker to choose mode, executor model, tools, and config (session-scoped) |
 | `/devin-init` | Create a `.pi/devin.json` template to set the executor model and tool selection |
 | `/devin-status` | Show current Devin mode, executor, tool selection, and consent state |
 ### Tools
@@ -57,9 +57,8 @@ The extension registers one tool:
 
 ### Interactive setup (recommended for first use)
 
-1. Run `/devin-setup` to pick an executor model and session config interactively.
-2. Turn Devin on with `/devin on`.
-3. Ask your question. The model uses the sidekick executor for implementation tasks.
+1. Run `/devin-setup` to pick mode, executor model, and session config interactively.
+2. Ask your question. In `available` mode the planner decides when to use the sidekick; in `forced` mode every normal prompt is routed through the planner/sidekick split.
 
 ### Config-file setup
 
@@ -97,11 +96,13 @@ the effective configuration.
 |-----|---------|-------------|
 | `executor` | auto-selected | Model identifier for the executor (e.g. `"openai/gpt-4.1-mini"`). Auto-selects the first non-current text model if unset. |
 | `executorTools` | `"all"` | Tool selection: `"none"`, `"readonly"`, `"all"`, or an array like `["read", "grep", "write"]`. |
-| `executorToolsConsent` | `false` | When `true`, skips the consent prompt for mutating tools. |
-| `maxExecutorOutputTokens` | `4096` | Max output tokens per executor call. |
-| `temperature` | `0.2` | Temperature for the executor model. |
+| `executorToolsConsent` | `false` | When `true`, skips the consent prompt for mutating tools in trusted projects. Untrusted projects always block mutating tools. |
+| `maxExecutorOutputTokens` | `4096` | Max output tokens per executor call (validated and capped). |
+| `temperature` | `0.2` | Temperature for the executor model (`0..2`). |
 | `maxToolCalls` | `16` | Max tool calls per executor run (clamped to 1–100). |
 | `footerDisplay` | `"full"` | Footer verbosity: `"full"`, `"compact"`, or `"off"`. |
+
+Invalid config values are ignored or clamped before use. Project-local `.pi/devin.json` is read only when the project is trusted; global `devin.json` remains the fallback.
 
 **Session precedence:** `/devin-setup` selection overrides `.pi/devin.json`. Session state persists in the conversation and is restored on session restore.
 

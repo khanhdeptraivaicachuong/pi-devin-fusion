@@ -10,6 +10,8 @@ import type { SidekickOptions } from "./types.ts";
 export interface ExecutorPolicy {
 	executor?: string;
 	toolSelectionConsentRequired: boolean;
+	mutatingToolsAllowed: boolean;
+	mutatingToolsBlockedReason?: "mutation_requires_trusted_project";
 }
 
 /**
@@ -25,9 +27,12 @@ export function resolveExecutorPolicy(
 	const config = applyDefaults(loadConfigLocal(cwd, projectTrusted), overrides);
 	const mutating = isMutatingSelection(config.executorTools);
 	const hasConsent = consented || config.executorToolsConsent === true;
+	const mutatingToolsAllowed = !mutating || projectTrusted;
 	return {
 		executor: config.executor,
-		toolSelectionConsentRequired: mutating && !hasConsent,
+		toolSelectionConsentRequired: mutating && mutatingToolsAllowed && !hasConsent,
+		mutatingToolsAllowed,
+		mutatingToolsBlockedReason: mutatingToolsAllowed ? undefined : "mutation_requires_trusted_project",
 	};
 }
 

@@ -5,19 +5,27 @@
 
 import type { Api, Model } from "../types.ts";
 
+type TestCase = { name: string; fn: () => void | Promise<void> };
+
+const tests: TestCase[] = [];
+
 export function test(name: string, fn: () => void | Promise<void>) {
-	try {
-		Promise.resolve(fn()).then(
-			() => console.log(`✓ ${name}`),
-			(err) => {
-				console.error(`✗ ${name}:`, err);
-				process.exitCode = 1;
-			},
-		);
-	} catch (err) {
-		console.error(`✗ ${name}:`, err);
-		process.exitCode = 1;
+	tests.push({ name, fn });
+}
+
+export async function runRegisteredTests(): Promise<number> {
+	let failures = 0;
+	while (tests.length > 0) {
+		const { name, fn } = tests.shift()!;
+		try {
+			await fn();
+			console.log(`✓ ${name}`);
+		} catch (err) {
+			console.error(`✗ ${name}:`, err);
+			failures++;
+		}
 	}
+	return failures;
 }
 
 export function eq<T>(a: T, b: T, msg: string) {

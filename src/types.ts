@@ -63,6 +63,7 @@ export interface SidekickDetails {
 	error?: string;
 	failure_reason?:
 		| "mutation_consent_required"
+		| "mutation_requires_trusted_project"
 		| "no_executor_model"
 		| "rate_limited"
 		| "insufficient_credits"

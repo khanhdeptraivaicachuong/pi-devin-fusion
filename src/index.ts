@@ -18,8 +18,7 @@ import { modelDisplay } from "./models.ts";
 import { clampMaxToolCalls, isMutatingSelection, selectionLabel } from "./tools.ts";
 import { selectDevinSetup, type DevinSetupState } from "./ui.ts";
 import { PLANNER_FORCE_PROMPT_PREFIX } from "./prompts.ts";
-import { SIDEKICK_SYSTEM_PROMPT } from "./prompts.ts";
-import type { DevinConfig, DevinMode, FooterDisplay, SidekickOptions, ToolMode } from "./types.ts";
+import type { DevinConfig, DevinMode, FooterDisplay, SidekickOptions, ToolSelection } from "./types.ts";
 
 const SidekickParams = Type.Object({
 	prompt: Type.String({
@@ -50,6 +49,26 @@ function normalizeMode(state: DevinState | undefined): DevinMode {
 	return "available";
 }
 
+export function devinArgumentCompletions(prefix: string) {
+	const items = [
+		{ value: "on", label: "on", description: "Force every prompt through the planner/sidekick split" },
+		{ value: "forced", label: "forced", description: "Alias for on" },
+		{ value: "force", label: "force", description: "Alias for on" },
+		{ value: "available", label: "available", description: "Let the model decide when to delegate" },
+		{ value: "auto", label: "auto", description: "Alias for available" },
+		{ value: "off", label: "off", description: "Disable the sidekick tool for this session" },
+		{ value: "disable", label: "disable", description: "Alias for off" },
+		{ value: "disabled", label: "disabled", description: "Alias for off" },
+	];
+	const filtered = items.filter((i) => i.value.startsWith(prefix.trim().toLowerCase()));
+	return filtered.length > 0 ? filtered : null;
+}
+
+export function executorStatusLabel(configuredExecutor: string | undefined, resolvedExecutor: string | undefined): string {
+	if (configuredExecutor) return configuredExecutor;
+	return resolvedExecutor ? `auto -> ${resolvedExecutor}` : "auto";
+}
+
 function isForcePrompt(text: string): boolean {
 	return text.startsWith("Delegate the following task to the sidekick executor before answering.");
 }
@@ -70,7 +89,7 @@ interface DevinState {
 	executorId?: string;
 	executorAuto?: boolean;
 	mode?: DevinMode;
-	executorTools?: ToolMode;
+	executorTools?: ToolSelection;
 	maxToolCalls?: number;
 	toolsConsented?: boolean;
 	footerDisplay?: FooterDisplay;
@@ -101,7 +120,7 @@ function restoreSessionState(ctx: ExtensionContext): DevinState | undefined {
 				executorId?: string;
 				executorAuto?: boolean;
 				mode?: DevinMode;
-				executorTools?: ToolMode;
+				executorTools?: ToolSelection;
 				maxToolCalls?: number;
 				toolsConsented?: boolean;
 				footerDisplay?: FooterDisplay;
@@ -160,12 +179,11 @@ export function buildInitialState(
 	configFooterDisplay?: DevinConfig["footerDisplay"],
 ): DevinSetupState {
 	const session = restoreSessionState(ctx);
-	const configTools = typeof configExecutorTools === "string" ? configExecutorTools : undefined;
 	return {
 		executorId: session ? session.executorId : resolvedExecutorId,
 		executorAuto: session ? (session.executorAuto ?? false) : !resolvedExecutorId,
 		mode: normalizeMode(session),
-		executorTools: session?.executorTools ?? configTools ?? "all",
+		executorTools: session?.executorTools ?? configExecutorTools ?? "all",
 		maxToolCalls: session?.maxToolCalls ?? configMaxToolCalls,
 		toolsConsented: session?.toolsConsented ?? false,
 		footerDisplay: session?.footerDisplay ?? normalizeFooterDisplay(configFooterDisplay),
@@ -248,6 +266,23 @@ export default function (pi: ExtensionAPI) {
 
 			// Consent for mutating executor tools.
 			const mutatingEnabled = isMutatingSelection(config.executorTools);
+			if (mutatingEnabled && !ctx.isProjectTrusted()) {
+				return {
+					content: [{
+						type: "text",
+						text: JSON.stringify({
+							status: "error",
+							error: "executor mutating tools require a trusted project",
+							failure_reason: "mutation_requires_trusted_project",
+						}, null, 2),
+					}],
+					details: {
+						status: "error",
+						error: "executor mutating tools require a trusted project",
+						failure_reason: "mutation_requires_trusted_project",
+					},
+				};
+			}
 			const consented = state?.toolsConsented || config.executorToolsConsent === true;
 			let toolsConsented = consented;
 			if (mutatingEnabled && !consented) {
@@ -312,15 +347,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("devin", {
 		description: "Set Devin mode: /devin on | available | off (no arg toggles available/forced; /devin <prompt> forces once)",
-		getArgumentCompletions: (prefix: string) => {
-			const items = [
-				{ value: "on", label: "on", description: "Force every prompt through the planner/sidekick split" },
-				{ value: "available", label: "available", description: "Let the model decide when to delegate" },
-				{ value: "off", label: "off", description: "Disable the sidekick tool for this session" },
-			];
-			const filtered = items.filter((i) => i.value.startsWith(prefix.trim().toLowerCase()));
-			return filtered.length > 0 ? filtered : null;
-		},
+		getArgumentCompletions: devinArgumentCompletions,
 		handler: async (args, ctx) => {
 			const prompt = args.trim();
 			const state = restoreSessionState(ctx);
@@ -453,18 +480,19 @@ export default function (pi: ExtensionAPI) {
 		description: "Show the current Devin mode and executor",
 		handler: async (_args, ctx) => {
 			const state = restoreSessionState(ctx);
-			const config = loadConfig(ctx.cwd, ctx.isProjectTrusted());
+			const rawConfig = loadConfig(ctx.cwd, ctx.isProjectTrusted());
+			const config = applyDefaults(rawConfig, sessionConfigOverrides(state));
+			const warnings: string[] = [];
+			const resolvedExecutor = resolveExecutorModel(ctx.modelRegistry, ctx.model, config.executor, warnings);
 			const mode = normalizeMode(state);
-			const executorId = state?.executorId ?? config.executor ?? "auto";
-			const tools = typeof state?.executorTools === "string" ? state.executorTools : config.executorTools ?? "all";
-			const footer = normalizeFooterDisplay(state?.footerDisplay ?? config.footerDisplay);
-			const maxCalls = clampMaxToolCalls(state?.maxToolCalls ?? config.maxToolCalls);
+			const footer = normalizeFooterDisplay(config.footerDisplay);
 			const lines = [
 				`Mode: ${mode}`,
-				`Executor: ${executorId}`,
-				`Tools: ${selectionLabel(tools)} (max ${maxCalls})`,
+				`Executor: ${executorStatusLabel(config.executor, resolvedExecutor ? modelDisplay(resolvedExecutor) : undefined)}`,
+				`Tools: ${selectionLabel(config.executorTools)} (max ${clampMaxToolCalls(config.maxToolCalls)})`,
 				`Consent: ${state?.toolsConsented || config.executorToolsConsent ? "granted" : "not granted"}`,
 				`Footer: ${footer}`,
+				...(warnings.length ? [`Warnings: ${warnings.join("; ")}`] : []),
 			];
 			const text = lines.join("\n");
 			if (ctx.mode === "print") console.log(text);
@@ -473,6 +501,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
+
 		if (event.toolName !== "sidekick") return;
 		const state = restoreSessionState(ctx);
 		if (normalizeMode(state) === "off") {
@@ -493,10 +522,11 @@ export default function (pi: ExtensionAPI) {
 	const refreshFooter = (ctx: ExtensionContext) => {
 		const state = restoreSessionState(ctx);
 		const mode = normalizeMode(state);
-		if (mode === "off" || state?.executorId) {
-			updateStatus(pi, ctx, mode, state?.executorId, state?.footerDisplay);
-		}
+		const config = applyDefaults(loadConfig(ctx.cwd, ctx.isProjectTrusted()), sessionConfigOverrides(state));
+		const resolvedExecutor = resolveExecutorModel(ctx.modelRegistry, ctx.model, config.executor, []);
+		updateStatus(pi, ctx, mode, resolvedExecutor ? modelDisplay(resolvedExecutor) : config.executor, config.footerDisplay);
 	};
+
 	pi.on("session_start", async (_event, ctx) => refreshFooter(ctx));
 	pi.on("session_tree", async (_event, ctx) => refreshFooter(ctx));
 	pi.on("model_select", async (_event, ctx) => refreshFooter(ctx));

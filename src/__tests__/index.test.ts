@@ -4,7 +4,7 @@
  */
 
 import { test, eq } from "./_harness.ts";
-import { buildInitialState, normalizeFooterDisplay } from "../index.ts";
+import { buildInitialState, devinArgumentCompletions, executorStatusLabel, normalizeFooterDisplay } from "../index.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // --- normalizeFooterDisplay ---
@@ -62,4 +62,19 @@ test("buildInitialState falls back to config when session has no executor", () =
 	eq(state.executorTools, "readonly", "config tools fill in");
 	eq(state.maxToolCalls, 8, "config max calls fill in");
 	eq(state.footerDisplay, "compact", "config footer fill in");
+});
+
+test("buildInitialState preserves explicit config tool lists", () => {
+	const state = buildInitialState(fakeContext(), undefined, ["read", "bash"], 8, "compact");
+	eq(state.executorTools, ["read", "bash"], "custom tools preserved");
+});
+
+test("devinArgumentCompletions includes every accepted mode alias", () => {
+	const completions = devinArgumentCompletions("")?.map((i) => i.value).sort();
+	eq(completions, ["auto", "available", "disable", "disabled", "force", "forced", "off", "on"].sort(), "aliases");
+});
+
+test("executorStatusLabel shows auto resolution when available", () => {
+	eq(executorStatusLabel(undefined, "openai/gpt-4.1-mini"), "auto -> openai/gpt-4.1-mini", "auto resolved");
+	eq(executorStatusLabel("anthropic/claude", "openai/gpt-4.1-mini"), "anthropic/claude", "configured label");
 });

@@ -6,6 +6,7 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { runRegisteredTests } from "./_harness.ts";
 
 const dir = import.meta.dirname;
 let failures = 0;
@@ -16,6 +17,7 @@ for (const entry of readdirSync(dir)) {
 	console.log(`\n[${entry}]`);
 	try {
 		await import(pathToFileURL(path).href);
+		failures += await runRegisteredTests();
 	} catch (err) {
 		console.error(`${entry} failed:`, err);
 		failures++;
@@ -23,7 +25,7 @@ for (const entry of readdirSync(dir)) {
 }
 
 if (failures > 0) {
-	console.error(`\n${failures} test file(s) failed.`);
+	console.error(`\n${failures} test(s) failed.`);
 	process.exit(1);
 }
 console.log("\nAll tests passed.");

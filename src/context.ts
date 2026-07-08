@@ -32,6 +32,7 @@ function getContentText(content: unknown): string {
 			}
 			return "";
 		})
+		.filter((text) => text.trim())
 		.join("\n")
 		.trim();
 }

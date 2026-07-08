@@ -4,6 +4,9 @@
   "description": "Devin sidekick planner/executor split for pi, inspired by opencode-fusion",
   "type": "module",
   "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/khanhdeptraivaicachuong/pi-devin-fusion.git"

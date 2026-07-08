@@ -9,7 +9,8 @@ import { buildSidekickTaskText } from "./context.ts";
 import { SIDEKICK_SYSTEM_PROMPT } from "./prompts.ts";
 import { callModelWithTools, getTextContent } from "./llm.ts";
 import { resolveExecutorModel } from "./models.ts";
-import { isMutatingSelection, resolveToolDefs } from "./tools.ts";
+import { sanitizeErrorMessage } from "./sanitize.ts";
+import { clampMaxToolCalls, isMutatingSelection, resolveToolDefs } from "./tools.ts";
 import type { SidekickOptions, SidekickResult } from "./types.ts";
 
 /** Serialize runs that can mutate shared filesystem/state to avoid clobbered writes. */
@@ -34,6 +35,8 @@ function classifyError(message: string): SidekickResult["details"]["failure_reas
 	}
 	return "unexpected_error";
 }
+
+export { sanitizeErrorMessage } from "./sanitize.ts";
 
 export async function runSidekick(
 	cwd: string,
@@ -61,9 +64,20 @@ export async function runSidekick(
 		return { content: [{ type: "text", text: JSON.stringify(details, null, 2) }], details };
 	}
 
-	// Fail-closed: mutating executor tools require explicit consent.
+	// Fail-closed: mutating executor tools require a trusted project and explicit consent.
+	const mutating = isMutatingSelection(config.executorTools);
+	if (mutating && !projectTrusted) {
+		const details = {
+			status: "error" as const,
+			executor_model: undefined,
+			error: "executor mutating tools require a trusted project",
+			failure_reason: "mutation_requires_trusted_project" as const,
+			warnings,
+		};
+		return { content: [{ type: "text", text: JSON.stringify(details, null, 2) }], details };
+	}
 	const hasConsent = consented || config.executorToolsConsent === true;
-	if (isMutatingSelection(config.executorTools) && !hasConsent) {
+	if (mutating && !hasConsent) {
 		const details = {
 			status: "error" as const,
 			executor_model: undefined,
@@ -76,7 +90,6 @@ export async function runSidekick(
 
 	const taskText = buildSidekickTaskText(task, overrides.context_text);
 	const toolDefs = resolveToolDefs(config.executorTools, cwd);
-	const mutating = isMutatingSelection(config.executorTools);
 	const executorModel = modelDisplayLocal(executor);
 	const label = `Sidekick: ${executorModel} | tools: ${config.executorTools}${mutating ? " (serialized)" : ""}`;
 
@@ -92,7 +105,7 @@ export async function runSidekick(
 			config.temperature,
 			signal,
 			toolDefs,
-			config.maxToolCalls,
+			clampMaxToolCalls(config.maxToolCalls),
 			ctx,
 		);
 
@@ -110,7 +123,7 @@ export async function runSidekick(
 		};
 		return { content: [{ type: "text", text: output }], details };
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+		const message = sanitizeErrorMessage(err instanceof Error ? err.message : String(err));
 		const details = {
 			status: "error" as const,
 			executor_model: executorModel,
